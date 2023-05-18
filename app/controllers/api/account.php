@@ -494,6 +494,18 @@ App::get('/v1/account/sessions/oauth2/:provider/redirect')
                 Query::equal('email', [$email]),
             ]);
 
+            // If user is not found, check if there is a connected account with the same provider user ID
+            if ($user === false || $user->isEmpty()) {
+                $connectedAccount = $dbForProject->findOne('connectedAccounts', [
+                    Query::equal('provider', [$provider]),
+                    Query::equal('providerUid', [$oauth2ID]),
+                ]);
+
+                if ($connectedAccount !== false && !$connectedAccount->isEmpty()) {
+                    $user = $dbForProject->getDocument('users', $connectedAccount->getAttribute('userId'));
+                }
+            }
+
             if ($user === false || $user->isEmpty()) { // Last option -> create the user, generate random password
                 $limit = $project->getAttribute('auths', [])['limit'] ?? 0;
 
@@ -540,8 +552,43 @@ App::get('/v1/account/sessions/oauth2/:provider/redirect')
             }
         }
 
+        Authorization::setRole(Role::user($user->getId())->toString());
+        Authorization::setRole(Role::users()->toString());
+
         if (false === $user->getAttribute('status')) { // Account is blocked
             throw new Exception(Exception::USER_BLOCKED); // User is in status blocked
+        }
+
+        $connectedAccount = $dbForProject->findOne('connectedAccounts', [
+            Query::equal('userInternalId', [$user->getInternalId()]),
+            Query::equal('provider', [$provider]),
+            Query::equal('providerUid', [$oauth2ID]),
+        ]);
+        if ($connectedAccount === false || $connectedAccount->isEmpty()) {
+            $userId = $user->getId();
+            $dbForProject->createDocument('connectedAccounts', new Document([
+                '$id' => ID::unique(),
+                '$permissions' => [
+                    Permission::read(Role::user($userId)),
+                    Permission::update(Role::user($userId)),
+                    Permission::delete(Role::user($userId)),
+                ],
+                'userInternalId' => $user->getInternalId(),
+                'userId' => $userId,
+                'provider' => $provider,
+                'status' => 'connected',
+                'providerUid' => $oauth2ID,
+                'providerAccessToken' => $accessToken,
+                'providerRefreshToken' => $refreshToken,
+                'providerAccessTokenExpiry' => DateTime::addSeconds(new \DateTime(), (int)$accessTokenExpiry),
+            ]));
+        } else {
+            $connectedAccount
+                ->setAttribute('status', 'connected')
+                ->setAttribute('providerAccessToken', $accessToken)
+                ->setAttribute('providerRefreshToken', $refreshToken)
+                ->setAttribute('providerAccessTokenExpiry', DateTime::addSeconds(new \DateTime(), (int)$accessTokenExpiry));
+            $dbForProject->updateDocument('connectedAccounts', $connectedAccount->getId(), $connectedAccount);
         }
 
         // Create session token, verify user account and update OAuth2 ID and Access Token
@@ -624,6 +671,83 @@ App::get('/v1/account/sessions/oauth2/:provider/redirect')
         ;
     });
 
+App::get('/v1/account/connected')
+    ->desc('List Connected Accounts')
+    ->groups(['api', 'account'])
+    ->label('scope', 'account')
+    ->label('usage.metric', 'users.{scope}.requests.read')
+    ->label('sdk.auth', [APP_AUTH_TYPE_SESSION, APP_AUTH_TYPE_JWT])
+    ->label('sdk.namespace', 'account')
+    ->label('sdk.method', 'listConnected')
+    ->label('sdk.description', '/docs/references/account/list-connected.md')
+    ->label('sdk.response.code', Response::STATUS_CODE_OK)
+    ->label('sdk.response.type', Response::CONTENT_TYPE_JSON)
+    ->label('sdk.response.model', Response::MODEL_CONNECTED_ACCOUNT_LIST)
+    ->label('sdk.offline.model', '/account/connected')
+    ->param('queries', [], new Text(100), 'Array of query strings generated using the Query class provided by the SDK. [Learn more about queries](https://appwrite.io/docs/queries). Maximum of ' . APP_LIMIT_ARRAY_PARAMS_SIZE . ' queries are allowed, each ' . APP_LIMIT_ARRAY_ELEMENT_SIZE . ' characters long. You may filter on the following attributes: ' . implode(', ', []), true)
+    ->inject('response')
+    ->inject('user')
+    ->inject('dbForProject')
+    ->action(function (array $queries, Response $response, Document $user, Database $dbForProject) {
+
+        $queries = Query::parseQueries($queries);
+        
+        $queries[] = Query::equal('userInternalId', [$user->getInternalId()]);
+
+        // Get cursor document if there was a cursor query
+        $cursor = Query::getByType($queries, Query::TYPE_CURSORAFTER, Query::TYPE_CURSORBEFORE);
+        $cursor = reset($cursor);
+        if ($cursor) {
+            /** @var Query $cursor */
+            $connectedId = $cursor->getValue();
+            $cursorDocument = $dbForProject->getDocument('connectedAccounts', $connectedId);
+
+            if ($cursorDocument->isEmpty()) {
+                throw new Exception(Exception::GENERAL_CURSOR_NOT_FOUND, "Connected Account '{$connectedId}' for the 'cursor' value not found.");
+            }
+
+            $cursor->setValue($cursorDocument);
+        }
+
+        $filterQueries = Query::groupByType($queries)['filters'];
+
+        $results = $dbForProject->find('connectedAccounts', $queries);
+        $total = $dbForProject->count('connectedAccounts', $filterQueries, APP_LIMIT_COUNT);
+
+        $response->dynamic(new Document([
+            'connected' => $results,
+            'total' => $total,
+        ]), Response::MODEL_CONNECTED_ACCOUNT_LIST);
+    });
+
+App::delete('/v1/account/connected/:connectedId')
+    ->desc('Delete a Connected Account')
+    ->groups(['api', 'account'])
+    ->label('scope', 'account')
+    ->label('event', 'users.[userId].connected.[connectedId].delete')
+    ->label('usage.metric', 'connectedAccount.{scope}.requests.delete')
+    ->label('sdk.auth', [APP_AUTH_TYPE_SESSION, APP_AUTH_TYPE_JWT])
+    ->label('sdk.namespace', 'account')
+    ->label('sdk.method', 'deleteConnected')
+    ->label('sdk.description', '/docs/references/account/delete-connected.md')
+    ->label('sdk.response.code', Response::STATUS_CODE_NOCONTENT)
+    ->label('sdk.response.model', Response::MODEL_NONE)
+    ->param('connectedId', [], new UID(), '')
+    ->inject('response')
+    ->inject('dbForProject')
+    ->action(function (string $connectedId, Response $response, Database $dbForProject) {
+
+        $connectedAccount = $dbForProject->getDocument('connectedAccounts', $connectedId);
+
+        if ($connectedAccount->isEmpty()) {
+            throw new Exception(Exception::USER_CONNECTED_ACCOUNT_NOT_FOUND);
+        }
+
+        $dbForProject->deleteDocument('connectedAccounts', $connectedId);
+
+        return $response->noContent();
+    });
+    
 App::post('/v1/account/sessions/magic-url')
     ->desc('Create Magic URL session')
     ->groups(['api', 'account'])

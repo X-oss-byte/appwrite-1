@@ -45,6 +45,7 @@ use Appwrite\Utopia\Response\Model\Execution;
 use Appwrite\Utopia\Response\Model\Build;
 use Appwrite\Utopia\Response\Model\File;
 use Appwrite\Utopia\Response\Model\Bucket;
+use Appwrite\Utopia\Response\Model\ConnectedAccount;
 use Appwrite\Utopia\Response\Model\ConsoleVariables;
 use Appwrite\Utopia\Response\Model\Func;
 use Appwrite\Utopia\Response\Model\Index;
@@ -142,6 +143,8 @@ class Response extends SwooleResponse
     public const MODEL_USER_LIST = 'userList';
     public const MODEL_SESSION = 'session';
     public const MODEL_SESSION_LIST = 'sessionList';
+    public const MODEL_CONNECTED_ACCOUNT = 'connectedAccount';
+    public const MODEL_CONNECTED_ACCOUNT_LIST = 'connectedAccountList';
     public const MODEL_TOKEN = 'token';
     public const MODEL_JWT = 'jwt';
     public const MODEL_PREFERENCES = 'preferences';
@@ -257,6 +260,7 @@ class Response extends SwooleResponse
             ->setModel(new BaseList('Indexes List', self::MODEL_INDEX_LIST, 'indexes', self::MODEL_INDEX))
             ->setModel(new BaseList('Users List', self::MODEL_USER_LIST, 'users', self::MODEL_USER))
             ->setModel(new BaseList('Sessions List', self::MODEL_SESSION_LIST, 'sessions', self::MODEL_SESSION))
+            ->setModel(new BaseList('Connected Accounts List', self::MODEL_CONNECTED_ACCOUNT_LIST, 'connected', self::MODEL_CONNECTED_ACCOUNT))
             ->setModel(new BaseList('Logs List', self::MODEL_LOG_LIST, 'logs', self::MODEL_LOG))
             ->setModel(new BaseList('Files List', self::MODEL_FILE_LIST, 'files', self::MODEL_FILE))
             ->setModel(new BaseList('Buckets List', self::MODEL_BUCKET_LIST, 'buckets', self::MODEL_BUCKET))
@@ -309,6 +313,7 @@ class Response extends SwooleResponse
             ->setModel(new Account())
             ->setModel(new Preferences())
             ->setModel(new Session())
+            ->setModel(new ConnectedAccount())
             ->setModel(new Token())
             ->setModel(new JWT())
             ->setModel(new Locale())
