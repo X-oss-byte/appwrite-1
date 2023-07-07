@@ -1208,7 +1208,7 @@ App::post('/v1/account/sessions/anonymous')
             'sessions' => null,
             'tokens' => null,
             'memberships' => null,
-            'search' => $userId
+            'search' => $userId,
         ])));
 
         // Create session token

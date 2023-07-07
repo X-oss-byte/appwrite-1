@@ -1430,7 +1430,18 @@ $collections = [
                 'default' => null,
                 'array' => false,
                 'filters' => [],
-            ]
+            ],
+            [
+                '$id' => ID::custom('accessedAt'),
+                'type' => Database::VAR_DATETIME,
+                'format' => '',
+                'size' => 0,
+                'signed' => false,
+                'required' => false,
+                'default' => null,
+                'array' => false,
+                'filters' => ['datetime'],
+            ],
         ],
         'indexes' => [
             [
@@ -1495,7 +1506,14 @@ $collections = [
                 'attributes' => ['search'],
                 'lengths' => [],
                 'orders' => [],
-            ]
+            ],
+            [
+                '$id' => '_key_accessedAt',
+                'type' => Database::INDEX_KEY,
+                'attributes' => ['accessedAt'],
+                'lengths' => [],
+                'orders' => [],
+            ],
         ],
     ],
 
