@@ -2,7 +2,7 @@
 
 use Ahc\Jwt\JWT;
 use Appwrite\Auth\Auth;
-use Appwrite\Auth\Validator\Password;
+use Appwrite\Auth\Validator\PasswordNew;
 use Appwrite\Auth\Validator\Phone;
 use Appwrite\Detector\Detector;
 use Appwrite\Event\Event;
@@ -40,9 +40,6 @@ use Utopia\Validator\ArrayList;
 use Utopia\Validator\Assoc;
 use Utopia\Validator\Text;
 use Utopia\Validator\WhiteList;
-use Appwrite\Auth\Validator\PasswordHistory;
-use Appwrite\Auth\Validator\PasswordDictionary;
-use Appwrite\Auth\Validator\PersonalData;
 
 $oauthDefaultSuccess = '/auth/oauth2/success';
 $oauthDefaultFailure = '/auth/oauth2/failure';
@@ -67,7 +64,7 @@ App::post('/v1/account')
     ->label('abuse-limit', 10)
     ->param('userId', '', new CustomId(), 'Unique Id. Choose a custom ID or generate a random ID with `ID.unique()`. Valid chars are a-z, A-Z, 0-9, period, hyphen, and underscore. Can\'t start with a special char. Max length is 36 chars.')
     ->param('email', '', new Email(), 'User email.')
-    ->param('password', '', fn ($project, $passwordsDictionary) => new PasswordDictionary($passwordsDictionary, $project->getAttribute('auths', [])['passwordDictionary'] ?? false), 'New user password. Must be at least 8 chars.', false, ['project', 'passwordsDictionary'])
+    ->param('password', '', fn ($project, $user, $passwordsDictionary) => new PasswordNew($project, $user, $passwordsDictionary), 'New user password. Must be at least 8 chars.', false, ['project', 'user', 'passwordsDictionary'])
     ->param('name', '', new Text(128), 'User name. Max length: 128 chars.', true)
     ->inject('request')
     ->inject('response')
@@ -96,13 +93,6 @@ App::post('/v1/account')
 
             if ($total >= $limit) {
                 throw new Exception(Exception::USER_COUNT_EXCEEDED);
-            }
-        }
-
-        if ($project->getAttribute('auths', [])['disallowPersonalData'] ?? false) {
-            $personalDataValidator = new PersonalData($userId, $email, $name, null);
-            if (!$personalDataValidator->isValid($password)) {
-                throw new Exception(Exception::USER_PASSWORD_PERSONAL_DATA);
             }
         }
 
@@ -171,7 +161,7 @@ App::post('/v1/account/sessions/email')
     ->label('abuse-limit', 10)
     ->label('abuse-key', 'url:{url},email:{param-email}')
     ->param('email', '', new Email(), 'User email.')
-    ->param('password', '', new Password(), 'User password. Must be at least 8 chars.')
+    ->param('password', '', new PasswordNew(), 'User password. Must be at least 8 chars.')
     ->inject('request')
     ->inject('response')
     ->inject('dbForProject')
@@ -1568,8 +1558,8 @@ App::patch('/v1/account/password')
     ->label('sdk.response.model', Response::MODEL_USER)
     ->label('sdk.offline.model', '/account')
     ->label('sdk.offline.key', 'current')
-    ->param('password', '', fn ($project, $passwordsDictionary) => new PasswordDictionary($passwordsDictionary, $project->getAttribute('auths', [])['passwordDictionary'] ?? false), 'New user password. Must be at least 8 chars.', false, ['project', 'passwordsDictionary'])
-    ->param('oldPassword', '', new Password(), 'Current user password. Must be at least 8 chars.', true)
+    ->param('password', '', fn ($project, $user, $passwordsDictionary) => new PasswordNew($project, $user, $passwordsDictionary), 'New user password. Must be at least 8 chars.', false, ['project', 'user', 'passwordsDictionary'])
+    ->param('oldPassword', '', new PasswordNew(), 'Current user password. Must be at least 8 chars.', true)
     ->inject('requestTimestamp')
     ->inject('response')
     ->inject('user')
@@ -1585,24 +1575,9 @@ App::patch('/v1/account/password')
 
         $newPassword = Auth::passwordHash($password, Auth::DEFAULT_ALGO, Auth::DEFAULT_ALGO_OPTIONS);
         $historyLimit = $project->getAttribute('auths', [])['passwordHistory'] ?? 0;
-        $history = [];
-        if ($historyLimit > 0) {
-            $history = $user->getAttribute('passwordHistory', []);
-            $validator = new PasswordHistory($history, $user->getAttribute('hash'), $user->getAttribute('hashOptions'));
-            if (!$validator->isValid($password)) {
-                throw new Exception(Exception::USER_PASSWORD_RECENTLY_USED);
-            }
-
-            $history[] = $newPassword;
-            array_slice($history, (count($history) - $historyLimit), $historyLimit);
-        }
-
-        if ($project->getAttribute('auths', [])['disallowPersonalData'] ?? false) {
-            $personalDataValidator = new PersonalData($user->getId(), $user->getAttribute('email'), $user->getAttribute('name'), $user->getAttribute('phone'));
-            if (!$personalDataValidator->isValid($password)) {
-                throw new Exception(Exception::USER_PASSWORD_PERSONAL_DATA);
-            }
-        }
+        $history = $user->getAttribute('passwordHistory', []);
+        $history[] = $newPassword;
+        $history = array_slice($history, (count($history) - $historyLimit), $historyLimit);
 
         $user
             ->setAttribute('password', $newPassword)
@@ -1637,7 +1612,7 @@ App::patch('/v1/account/email')
     ->label('sdk.offline.model', '/account')
     ->label('sdk.offline.key', 'current')
     ->param('email', '', new Email(), 'User email.')
-    ->param('password', '', new Password(), 'User password. Must be at least 8 chars.')
+    ->param('password', '', new PasswordNew(), 'User password. Must be at least 8 chars.')
     ->inject('requestTimestamp')
     ->inject('response')
     ->inject('user')
@@ -1699,7 +1674,7 @@ App::patch('/v1/account/phone')
     ->label('sdk.offline.model', '/account')
     ->label('sdk.offline.key', 'current')
     ->param('phone', '', new Phone(), 'Phone number. Format this number with a leading \'+\' and a country code, e.g., +16175551212.')
-    ->param('password', '', new Password(), 'User password. Must be at least 8 chars.')
+    ->param('password', '', new PasswordNew(), 'User password. Must be at least 8 chars.')
     ->inject('requestTimestamp')
     ->inject('response')
     ->inject('user')
@@ -2195,8 +2170,8 @@ App::put('/v1/account/recovery')
     ->label('abuse-key', 'url:{url},userId:{param-userId}')
     ->param('userId', '', new UID(), 'User ID.')
     ->param('secret', '', new Text(256), 'Valid reset token.')
-    ->param('password', '', new Password(), 'New user password. Must be at least 8 chars.')
-    ->param('passwordAgain', '', new Password(), 'Repeat new user password. Must be at least 8 chars.')
+    ->param('password', '', fn($project, $user, $passwordsDictionary) => new PasswordNew($project, $user, $passwordsDictionary), 'New user password. Must be at least 8 chars.', false, ['project', 'user', 'passwordsDictionary'])
+    ->param('passwordAgain', '', new PasswordNew(), 'Repeat new user password. Must be at least 8 chars.')
     ->inject('response')
     ->inject('dbForProject')
     ->inject('events')
@@ -2220,8 +2195,15 @@ App::put('/v1/account/recovery')
 
         Authorization::setRole(Role::user($profile->getId())->toString());
 
+        $newPassword = Auth::passwordHash($password, Auth::DEFAULT_ALGO, Auth::DEFAULT_ALGO_OPTIONS);
+        $historyLimit = $project->getAttribute('auths', [])['passwordHistory'] ?? 0;
+        $history = $user->getAttribute('passwordHistory', []);
+        $history[] = $newPassword;
+        $history = array_slice($history, (count($history) - $historyLimit), $historyLimit);
+
         $profile = $dbForProject->updateDocument('users', $profile->getId(), $profile
-                ->setAttribute('password', Auth::passwordHash($password, Auth::DEFAULT_ALGO, Auth::DEFAULT_ALGO_OPTIONS))
+                ->setAttribute('password', $newPassword)
+                ->setAttribute('passwordHistory', $history)
                 ->setAttribute('passwordUpdate', DateTime::now())
                 ->setAttribute('hash', Auth::DEFAULT_ALGO)
                 ->setAttribute('hashOptions', Auth::DEFAULT_ALGO_OPTIONS)
